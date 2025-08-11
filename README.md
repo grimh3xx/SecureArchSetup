@@ -37,7 +37,7 @@ git clone https://github.com/0xBl4ckn3t/SecureArchSetup
 cd SecureArchSetup
 
 # 3️⃣ Make scripts executable
-chmod +x seguranca_arch.py
+chmod +x Secure_Arch.py
 chmod +x install.sh   # optional
 
 # 4️⃣ Run the installer (recommended)
