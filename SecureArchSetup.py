@@ -5,6 +5,9 @@ import os
 import shutil
 import getpass
 from datetime import datetime
+from colorama import init, Fore, Style
+
+init(autoreset=True)  # Inicializa colorama
 
 LOG_FILE = "/var/log/arch_hardening.log"
 
@@ -12,23 +15,29 @@ LOG_FILE = "/var/log/arch_hardening.log"
 
 def log(msg):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] {msg}")
+    print(f"[{Fore.CYAN}{timestamp}{Style.RESET_ALL}] {msg}")
     with open(LOG_FILE, "a") as f:
         f.write(f"[{timestamp}] {msg}\n")
 
 def run_cmd(cmd):
-    log(f"🚀 Executando: {' '.join(cmd)}")
+    log(f"{Fore.YELLOW}🚀 Executando: {' '.join(cmd)}{Style.RESET_ALL}")
     try:
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError as e:
-        log(f"❌ Erro ao executar comando: {e}")
+        log(f"{Fore.RED}❌ Erro ao executar comando: {e}{Style.RESET_ALL}")
         return False
     return True
 
 def check_root():
     if os.geteuid() != 0:
-        log("⚠️ Execute este script como root!")
+        log(f"{Fore.RED}⚠️ Execute este script como root!{Style.RESET_ALL}")
         sys.exit(1)
+
+def confirmar_acao(mensagem):
+    resp = input(f"{Fore.MAGENTA}{mensagem} [y/N]: {Style.RESET_ALL}")
+    return resp.lower() == 'y'
+
+# ------------------ Instalação de Pacotes ------------------
 
 def instalar_pacote(pacote):
     log(f"📦 Instalando {pacote}...")
@@ -41,33 +50,55 @@ def instalar_pacote(pacote):
 
 def instalar_aur(pacote):
     if shutil.which('yay') is None:
-        log("❌ 'yay' não encontrado. Instale-o antes de usar pacotes AUR.")
+        log(f"{Fore.RED}❌ 'yay' não encontrado. Instale-o antes de usar pacotes AUR.{Style.RESET_ALL}")
         return
     log(f"📦 Instalando {pacote} (AUR)...")
     run_cmd(['yay', '-S', '--noconfirm', pacote])
 
-# ------------------ Docker ------------------
+# ------------------ Hardening ------------------
 
-def configurar_docker():
-    instalar_pacote('docker')
-    run_cmd(['systemctl', 'enable', '--now', 'docker.service'])
-    user = getpass.getuser()
-    run_cmd(['usermod', '-aG', 'docker', user])
+def aplicar_sysctl():
+    config_file = '/etc/sysctl.d/99-hardening.conf'
+    if os.path.exists(config_file):
+        shutil.copy(config_file, config_file + '.bak')
+        log(f"Backup de {config_file} criado.")
 
-    daemon_file = '/etc/docker/daemon.json'
-    if os.path.exists(daemon_file):
-        shutil.copy(daemon_file, daemon_file + '.bak')
-        log(f"Backup de {daemon_file} criado.")
+    config = '''fs.suid_dumpable = 0
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.accept_source_route = 0
+'''
+    with open(config_file, 'w') as f:
+        f.write(config)
+    run_cmd(['sysctl', '--system'])
+    log(f"{Fore.GREEN}✅ Configurações sysctl aplicadas.{Style.RESET_ALL}")
 
-    daemon_json = '''{
-  "no-new-privileges": true,
-  "userns-remap": "default"
-}'''
-    os.makedirs('/etc/docker', exist_ok=True)
-    with open(daemon_file, 'w') as f:
-        f.write(daemon_json)
-    run_cmd(['systemctl', 'restart', 'docker'])
-    log("✅ Docker configurado com segurança.")
+def hardening_ssh():
+    sshd_config = '/etc/ssh/sshd_config'
+    if os.path.exists(sshd_config):
+        shutil.copy(sshd_config, sshd_config + '.bak')
+        log(f"Backup de {sshd_config} criado.")
+    lines = []
+    with open(sshd_config, 'r') as f:
+        for line in f:
+            if line.startswith('PermitRootLogin'):
+                lines.append('PermitRootLogin no\n')
+            elif line.startswith('PasswordAuthentication'):
+                lines.append('PasswordAuthentication yes\n')
+            else:
+                lines.append(line)
+    with open(sshd_config, 'w') as f:
+        f.writelines(lines)
+    run_cmd(['systemctl', 'restart', 'sshd'])
+    log(f"{Fore.GREEN}✅ SSH hardening aplicado.{Style.RESET_ALL}")
+
+def instalar_kernel_hardened():
+    instalar_pacote('linux-hardened')
+    log(f"{Fore.YELLOW}⚠️ Após reiniciar, selecione o kernel linux-hardened no GRUB.{Style.RESET_ALL}")
+    run_cmd(['grub-mkconfig', '-o', '/boot/grub/grub.cfg'])
 
 # ------------------ Pentest ------------------
 
@@ -89,137 +120,109 @@ def instalar_pentest_extras():
     for p in pacotes:
         instalar_pacote(p)
 
-# ------------------ Hardening ------------------
-
-def aplicar_sysctl():
-    config_file = '/etc/sysctl.d/99-hardening.conf'
-    if os.path.exists(config_file):
-        shutil.copy(config_file, config_file + '.bak')
-        log(f"Backup de {config_file} criado.")
-
-    config = '''fs.suid_dumpable = 0
-net.ipv4.conf.all.rp_filter = 1
-net.ipv4.icmp_echo_ignore_broadcasts = 1
-net.ipv4.conf.all.accept_redirects = 0
-net.ipv6.conf.all.accept_redirects = 0
-net.ipv4.conf.all.send_redirects = 0
-net.ipv4.conf.default.accept_source_route = 0
-'''
-    with open(config_file, 'w') as f:
-        f.write(config)
-    run_cmd(['sysctl', '--system'])
-    log("✅ Configurações sysctl aplicadas.")
-
-def instalar_kernel_hardened():
-    instalar_pacote('linux-hardened')
-    log("⚠️ Após reiniciar, selecione o kernel linux-hardened no GRUB.")
-    run_cmd(['grub-mkconfig', '-o', '/boot/grub/grub.cfg'])
+# ------------------ Utilitários ------------------
 
 def checar_suid():
     output_file = '/root/arquivos_suid.txt'
     with open(output_file, 'w') as f:
         subprocess.run(['find', '/', '-perm', '-4000', '-type', 'f'], stdout=f)
-    log(f"⚠️ Arquivos SUID listados em {output_file}. Revise manualmente.")
+    log(f"{Fore.YELLOW}⚠️ Arquivos SUID listados em {output_file}.{Style.RESET_ALL}")
 
-def hardening_ssh():
-    sshd_config = '/etc/ssh/sshd_config'
-    if os.path.exists(sshd_config):
-        shutil.copy(sshd_config, sshd_config + '.bak')
-        log(f"Backup de {sshd_config} criado.")
-    lines = []
-    with open(sshd_config, 'r') as f:
-        for line in f:
-            if line.startswith('PermitRootLogin'):
-                lines.append('PermitRootLogin no\n')
-            elif line.startswith('PasswordAuthentication'):
-                lines.append('PasswordAuthentication yes\n')
-            else:
-                lines.append(line)
-    with open(sshd_config, 'w') as f:
-        f.writelines(lines)
-    run_cmd(['systemctl', 'restart', 'sshd'])
-    log("✅ SSH hardening aplicado.")
+def checar_permissoes_criticas():
+    output_file = '/root/world_writable.txt'
+    with open(output_file, 'w') as f:
+        subprocess.run(['find', '/', '-perm', '-2', '-type', 'f'], stdout=f)
+    log(f"{Fore.YELLOW}⚠️ Arquivos world-writable listados em {output_file}.{Style.RESET_ALL}")
 
-# ------------------ Automatização & Monitoramento ------------------
+def backup_etc():
+    dest = f"/root/etc_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}.tar.gz"
+    run_cmd(['tar', '-czf', dest, '/etc'])
+    log(f"{Fore.GREEN}✅ Backup de /etc criado em {dest}.{Style.RESET_ALL}")
+
+def relatorio_sistema():
+    log(f"{Fore.CYAN}===== Relatório do Sistema ====={Style.RESET_ALL}")
+    run_cmd(['uname', '-a'])
+    run_cmd(['pacman', '-Qe'])
 
 def atualizar_sistema():
-    log("Atualizando sistema...")
+    log(f"{Fore.CYAN}Atualizando sistema...{Style.RESET_ALL}")
     run_cmd(['pacman', '-Syu', '--noconfirm'])
 
 def instalar_aide():
     instalar_pacote('aide')
     run_cmd(['aide', '--init'])
     shutil.move('/var/lib/aide/aide.db.new', '/var/lib/aide/aide.db')
-    log("✅ AIDE instalado e inicializado para integridade do sistema.")
-
-def relatorio_sistema():
-    log("===== Relatório do Sistema =====")
-    run_cmd(['uname', '-a'])
-    run_cmd(['pacman', '-Qe'])
-
-# ------------------ Conveniência ------------------
-
-def checar_permissoes_criticas():
-    output_file = '/root/world_writable.txt'
-    with open(output_file, 'w') as f:
-        subprocess.run(['find', '/', '-perm', '-2', '-type', 'f'], stdout=f)
-    log(f"⚠️ Arquivos world-writable listados em {output_file}")
-
-def backup_etc():
-    dest = f"/root/etc_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}.tar.gz"
-    run_cmd(['tar', '-czf', dest, '/etc'])
-    log(f"✅ Backup de /etc criado em {dest}")
+    log(f"{Fore.GREEN}✅ AIDE instalado e inicializado.{Style.RESET_ALL}")
 
 def checar_pacotes_atualizados():
-    log("Verificando pacotes desatualizados...")
+    log(f"{Fore.CYAN}Verificando pacotes desatualizados...{Style.RESET_ALL}")
     run_cmd(['checkupdates'])
 
-# ------------------ Menu ------------------
+# ------------------ Menu Interativo ------------------
 
 def menu():
     while True:
-        print("""
-===== Menu Segurança Arch Linux =====
-1) Instalar e configurar Docker seguro
-2) Instalar ferramentas básicas de Pentest
-3) Instalar ferramentas AUR de Pentest
-4) Instalar ferramentas extras de Pentest
-5) Aplicar hardening sysctl
-6) Aplicar hardening SSH
-7) Instalar kernel linux-hardened
-8) Checar arquivos SUID no sistema
-9) Atualizar sistema
-10) Instalar AIDE (integridade)
-11) Gerar relatório do sistema
-12) Checar permissões críticas
-13) Backup de /etc
-14) Checar pacotes desatualizados
-15) Sair
+        print(f"""
+{Fore.BLUE}{Style.BRIGHT}===== Painel de Segurança & Pentest Arch Linux ====={Style.RESET_ALL}
+{Fore.GREEN}🔹 Hardening:{Style.RESET_ALL}
+  1) 💻 Aplicar sysctl hardening
+  2) 🔒 SSH hardening
+  3) 🐧 Instalar kernel linux-hardened
+
+{Fore.MAGENTA}🔹 Pentest:{Style.RESET_ALL}
+  4) 🛠 Ferramentas básicas
+  5) 🛠 Ferramentas AUR
+  6) 🛠 Ferramentas extras (sqlmap, wpscan, masscan, ffuf)
+
+{Fore.YELLOW}🔹 Utilitários:{Style.RESET_ALL}
+  7) 📄 Checar arquivos SUID
+  8) 📄 Checar permissões críticas
+  9) 💾 Backup de /etc
+  10) 📊 Relatório do sistema
+  11) 🔄 Atualizar sistema
+  12) 🛡 Instalar AIDE
+  13) ⏳ Checar pacotes desatualizados
+
+  0) 🚪 Sair
 """)
-        escolha = input("Escolha uma opção: ")
+        escolha = input(f"{Fore.CYAN}Escolha uma opção: {Style.RESET_ALL}")
         if escolha == '1':
-            configurar_docker()
-        elif escolha == '2':
-            instalar_pentest_basico()
-        elif escolha == '3':
-            instalar_pentest_aur()
-        elif escolha == '4':
-            instalar_pentest_extras()
-        elif escolha == '5':
             aplicar_sysctl()
-        elif escolha == '6':
+        elif escolha == '2':
             hardening_ssh()
-        elif escolha == '7':
+        elif escolha == '3':
             instalar_kernel_hardened()
-        elif escolha == '8':
+        elif escolha == '4':
+            instalar_pentest_basico()
+        elif escolha == '5':
+            instalar_pentest_aur()
+        elif escolha == '6':
+            instalar_pentest_extras()
+        elif escolha == '7':
             checar_suid()
-        elif escolha == '9':
-            atualizar_sistema()
-        elif escolha == '10':
-            instalar_aide()
-        elif escolha == '11':
-            relatorio_sistema()
-        elif escolha == '12':
+        elif escolha == '8':
             checar_permissoes_criticas()
-        elif escolha == '13':
+        elif escolha == '9':
             backup_etc()
+        elif escolha == '10':
+            relatorio_sistema()
+        elif escolha == '11':
+            atualizar_sistema()
+        elif escolha == '12':
+            instalar_aide()
+        elif escolha == '13':
+            checar_pacotes_atualizados()
+        elif escolha == '0':
+            log(f"{Fore.GREEN}Saindo... 🔚{Style.RESET_ALL}")
+            sys.exit(0)
+        else:
+            log(f"{Fore.RED}Opção inválida, tente novamente.{Style.RESET_ALL}")
+
+# ------------------ Main ------------------
+
+if __name__ == "__main__":
+    check_root()
+    try:
+        menu()
+    except KeyboardInterrupt:
+        log(f"{Fore.RED}Interrompido pelo usuário. Saindo...{Style.RESET_ALL}")
