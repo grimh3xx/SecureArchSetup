@@ -38,7 +38,6 @@ cd SecureArchSetup
 
 # 3️⃣ Make scripts executable
 chmod +x SecureArchSetup.py
-chmod +x install.sh   # optional
 
 # 4️⃣ Run the installer (recommended)
-sudo ./install.sh
+sudo python3 SecureArchSetup.py
