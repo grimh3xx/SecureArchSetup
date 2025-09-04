@@ -8,6 +8,8 @@ from datetime import datetime
 
 LOG_FILE = "/var/log/arch_hardening.log"
 
+# ------------------ Helper Functions ------------------
+
 def log(msg):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {msg}")
@@ -30,7 +32,8 @@ def check_root():
 
 def instalar_pacote(pacote):
     log(f"📦 Instalando {pacote}...")
-    if not run_cmd(['pacman', '-Qi', pacote]):
+    result = subprocess.run(['pacman', '-Qi', pacote], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if result.returncode != 0:
         run_cmd(['pacman', '-S', '--noconfirm', pacote])
         log(f"✅ {pacote} instalado com sucesso!")
     else:
@@ -42,6 +45,8 @@ def instalar_aur(pacote):
         return
     log(f"📦 Instalando {pacote} (AUR)...")
     run_cmd(['yay', '-S', '--noconfirm', pacote])
+
+# ------------------ Docker ------------------
 
 def configurar_docker():
     instalar_pacote('docker')
@@ -64,6 +69,8 @@ def configurar_docker():
     run_cmd(['systemctl', 'restart', 'docker'])
     log("✅ Docker configurado com segurança.")
 
+# ------------------ Pentest ------------------
+
 def instalar_pentest_basico():
     pacotes = ['nmap', 'nikto', 'netcat', 'tcpdump', 'wireshark-qt',
                'hashcat', 'aircrack-ng', 'hydra', 'john', 'dnsutils']
@@ -76,6 +83,13 @@ def instalar_pentest_aur():
                'bettercap', 'seclists']
     for p in pacotes:
         instalar_aur(p)
+
+def instalar_pentest_extras():
+    pacotes = ['sqlmap', 'wpscan', 'masscan', 'ffuf']
+    for p in pacotes:
+        instalar_pacote(p)
+
+# ------------------ Hardening ------------------
 
 def aplicar_sysctl():
     config_file = '/etc/sysctl.d/99-hardening.conf'
@@ -107,6 +121,61 @@ def checar_suid():
         subprocess.run(['find', '/', '-perm', '-4000', '-type', 'f'], stdout=f)
     log(f"⚠️ Arquivos SUID listados em {output_file}. Revise manualmente.")
 
+def hardening_ssh():
+    sshd_config = '/etc/ssh/sshd_config'
+    if os.path.exists(sshd_config):
+        shutil.copy(sshd_config, sshd_config + '.bak')
+        log(f"Backup de {sshd_config} criado.")
+    lines = []
+    with open(sshd_config, 'r') as f:
+        for line in f:
+            if line.startswith('PermitRootLogin'):
+                lines.append('PermitRootLogin no\n')
+            elif line.startswith('PasswordAuthentication'):
+                lines.append('PasswordAuthentication yes\n')
+            else:
+                lines.append(line)
+    with open(sshd_config, 'w') as f:
+        f.writelines(lines)
+    run_cmd(['systemctl', 'restart', 'sshd'])
+    log("✅ SSH hardening aplicado.")
+
+# ------------------ Automatização & Monitoramento ------------------
+
+def atualizar_sistema():
+    log("Atualizando sistema...")
+    run_cmd(['pacman', '-Syu', '--noconfirm'])
+
+def instalar_aide():
+    instalar_pacote('aide')
+    run_cmd(['aide', '--init'])
+    shutil.move('/var/lib/aide/aide.db.new', '/var/lib/aide/aide.db')
+    log("✅ AIDE instalado e inicializado para integridade do sistema.")
+
+def relatorio_sistema():
+    log("===== Relatório do Sistema =====")
+    run_cmd(['uname', '-a'])
+    run_cmd(['pacman', '-Qe'])
+
+# ------------------ Conveniência ------------------
+
+def checar_permissoes_criticas():
+    output_file = '/root/world_writable.txt'
+    with open(output_file, 'w') as f:
+        subprocess.run(['find', '/', '-perm', '-2', '-type', 'f'], stdout=f)
+    log(f"⚠️ Arquivos world-writable listados em {output_file}")
+
+def backup_etc():
+    dest = f"/root/etc_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}.tar.gz"
+    run_cmd(['tar', '-czf', dest, '/etc'])
+    log(f"✅ Backup de /etc criado em {dest}")
+
+def checar_pacotes_atualizados():
+    log("Verificando pacotes desatualizados...")
+    run_cmd(['checkupdates'])
+
+# ------------------ Menu ------------------
+
 def menu():
     while True:
         print("""
@@ -114,10 +183,18 @@ def menu():
 1) Instalar e configurar Docker seguro
 2) Instalar ferramentas básicas de Pentest
 3) Instalar ferramentas AUR de Pentest
-4) Aplicar hardening sysctl
-5) Instalar kernel linux-hardened
-6) Checar arquivos SUID no sistema
-7) Sair
+4) Instalar ferramentas extras de Pentest
+5) Aplicar hardening sysctl
+6) Aplicar hardening SSH
+7) Instalar kernel linux-hardened
+8) Checar arquivos SUID no sistema
+9) Atualizar sistema
+10) Instalar AIDE (integridade)
+11) Gerar relatório do sistema
+12) Checar permissões críticas
+13) Backup de /etc
+14) Checar pacotes desatualizados
+15) Sair
 """)
         escolha = input("Escolha uma opção: ")
         if escolha == '1':
@@ -127,20 +204,22 @@ def menu():
         elif escolha == '3':
             instalar_pentest_aur()
         elif escolha == '4':
-            aplicar_sysctl()
+            instalar_pentest_extras()
         elif escolha == '5':
-            instalar_kernel_hardened()
+            aplicar_sysctl()
         elif escolha == '6':
-            checar_suid()
+            hardening_ssh()
         elif escolha == '7':
-            log("Saindo... 🔚")
-            sys.exit(0)
-        else:
-            log("Opção inválida, tente novamente.")
-
-if __name__ == "__main__":
-    check_root()
-    try:
-        menu()
-    except KeyboardInterrupt:
-        log("Interrompido pelo usuário. Saindo...")
+            instalar_kernel_hardened()
+        elif escolha == '8':
+            checar_suid()
+        elif escolha == '9':
+            atualizar_sistema()
+        elif escolha == '10':
+            instalar_aide()
+        elif escolha == '11':
+            relatorio_sistema()
+        elif escolha == '12':
+            checar_permissoes_criticas()
+        elif escolha == '13':
+            backup_etc()
