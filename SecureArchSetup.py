@@ -278,4 +278,19 @@ def menu_principal():
             menu_pentest()
         elif escolha == '3':
             menu_utilitarios()
-        elif escolha ==
+        elif escolha == '4':
+            configurar_docker()
+        elif escolha == '0':
+            log(f"{Fore.GREEN}Saindo... 🔚{Style.RESET_ALL}")
+            sys.exit(0)
+        else:
+            log(f"{Fore.RED}Opção inválida.{Style.RESET_ALL}")
+
+# ------------------ Main ------------------
+
+if __name__ == "__main__":
+    check_root()
+    try:
+        menu_principal()
+    except KeyboardInterrupt:
+        log(f"{Fore.RED}Interrompido pelo usuário. Saindo...{Style.RESET_ALL}")
