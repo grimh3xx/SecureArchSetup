@@ -5,11 +5,13 @@ import os
 import shutil
 import getpass
 from datetime import datetime
+from time import sleep
 from colorama import init, Fore, Style
 
-init(autoreset=True)  # Inicializa colorama
+init(autoreset=True)
 
 LOG_FILE = "/var/log/arch_hardening.log"
+RELATORIO_FINAL = "/root/relatorio_final.txt"
 
 # ------------------ Helper Functions ------------------
 
@@ -17,6 +19,8 @@ def log(msg):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{Fore.CYAN}{timestamp}{Style.RESET_ALL}] {msg}")
     with open(LOG_FILE, "a") as f:
+        f.write(f"[{timestamp}] {msg}\n")
+    with open(RELATORIO_FINAL, "a") as f:
         f.write(f"[{timestamp}] {msg}\n")
 
 def run_cmd(cmd):
@@ -37,22 +41,28 @@ def confirmar_acao(mensagem):
     resp = input(f"{Fore.MAGENTA}{mensagem} [y/N]: {Style.RESET_ALL}")
     return resp.lower() == 'y'
 
-# ------------------ Instalação de Pacotes ------------------
+def barra_progresso(msg, duracao=1):
+    print(f"{Fore.BLUE}{msg}...{Style.RESET_ALL}")
+    for _ in range(3):
+        print(".", end='', flush=True)
+        sleep(duracao/3)
+    print(" ✅")
+
+# ------------------ Pacotes ------------------
 
 def instalar_pacote(pacote):
-    log(f"📦 Instalando {pacote}...")
     result = subprocess.run(['pacman', '-Qi', pacote], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if result.returncode != 0:
+        barra_progresso(f"Instalando {pacote}")
         run_cmd(['pacman', '-S', '--noconfirm', pacote])
-        log(f"✅ {pacote} instalado com sucesso!")
     else:
         log(f"⚠️ {pacote} já está instalado.")
 
 def instalar_aur(pacote):
     if shutil.which('yay') is None:
-        log(f"{Fore.RED}❌ 'yay' não encontrado. Instale-o antes de usar pacotes AUR.{Style.RESET_ALL}")
+        log(f"{Fore.RED}❌ 'yay' não encontrado.{Style.RESET_ALL}")
         return
-    log(f"📦 Instalando {pacote} (AUR)...")
+    barra_progresso(f"Instalando {pacote} (AUR)")
     run_cmd(['yay', '-S', '--noconfirm', pacote])
 
 # ------------------ Hardening ------------------
@@ -62,7 +72,6 @@ def aplicar_sysctl():
     if os.path.exists(config_file):
         shutil.copy(config_file, config_file + '.bak')
         log(f"Backup de {config_file} criado.")
-
     config = '''fs.suid_dumpable = 0
 net.ipv4.conf.all.rp_filter = 1
 net.ipv4.icmp_echo_ignore_broadcasts = 1
@@ -74,7 +83,7 @@ net.ipv4.conf.default.accept_source_route = 0
     with open(config_file, 'w') as f:
         f.write(config)
     run_cmd(['sysctl', '--system'])
-    log(f"{Fore.GREEN}✅ Configurações sysctl aplicadas.{Style.RESET_ALL}")
+    log(f"{Fore.GREEN}✅ Sysctl aplicado.{Style.RESET_ALL}")
 
 def hardening_ssh():
     sshd_config = '/etc/ssh/sshd_config'
@@ -100,23 +109,40 @@ def instalar_kernel_hardened():
     log(f"{Fore.YELLOW}⚠️ Após reiniciar, selecione o kernel linux-hardened no GRUB.{Style.RESET_ALL}")
     run_cmd(['grub-mkconfig', '-o', '/boot/grub/grub.cfg'])
 
+# ------------------ Docker ------------------
+
+def configurar_docker():
+    instalar_pacote('docker')
+    run_cmd(['systemctl', 'enable', '--now', 'docker.service'])
+    user = getpass.getuser()
+    run_cmd(['usermod', '-aG', 'docker', user])
+    daemon_file = '/etc/docker/daemon.json'
+    if os.path.exists(daemon_file):
+        shutil.copy(daemon_file, daemon_file + '.bak')
+    daemon_json = '''{
+  "no-new-privileges": true,
+  "userns-remap": "default"
+}'''
+    os.makedirs('/etc/docker', exist_ok=True)
+    with open(daemon_file, 'w') as f:
+        f.write(daemon_json)
+    run_cmd(['systemctl', 'restart', 'docker'])
+    log(f"{Fore.GREEN}✅ Docker seguro configurado.{Style.RESET_ALL}")
+
 # ------------------ Pentest ------------------
 
 def instalar_pentest_basico():
-    pacotes = ['nmap', 'nikto', 'netcat', 'tcpdump', 'wireshark-qt',
-               'hashcat', 'aircrack-ng', 'hydra', 'john', 'dnsutils']
+    pacotes = ['nmap','nikto','netcat','tcpdump','wireshark-qt','hashcat','aircrack-ng','hydra','john','dnsutils']
     for p in pacotes:
         instalar_pacote(p)
 
 def instalar_pentest_aur():
-    pacotes = ['metasploit', 'burpsuite', 'dirsearch', 'gobuster',
-               'zaproxy', 'wfuzz', 'enum4linux', 'crackmapexec',
-               'bettercap', 'seclists']
+    pacotes = ['metasploit','burpsuite','dirsearch','gobuster','zaproxy','wfuzz','enum4linux','crackmapexec','bettercap','seclists']
     for p in pacotes:
         instalar_aur(p)
 
 def instalar_pentest_extras():
-    pacotes = ['sqlmap', 'wpscan', 'masscan', 'ffuf']
+    pacotes = ['sqlmap','wpscan','masscan','ffuf']
     for p in pacotes:
         instalar_pacote(p)
 
@@ -136,93 +162,120 @@ def checar_permissoes_criticas():
 
 def backup_etc():
     dest = f"/root/etc_backup_{datetime.now().strftime('%Y%m%d%H%M%S')}.tar.gz"
-    run_cmd(['tar', '-czf', dest, '/etc'])
+    run_cmd(['tar','-czf',dest,'/etc'])
     log(f"{Fore.GREEN}✅ Backup de /etc criado em {dest}.{Style.RESET_ALL}")
 
 def relatorio_sistema():
     log(f"{Fore.CYAN}===== Relatório do Sistema ====={Style.RESET_ALL}")
-    run_cmd(['uname', '-a'])
-    run_cmd(['pacman', '-Qe'])
+    run_cmd(['uname','-a'])
+    run_cmd(['pacman','-Qe'])
 
 def atualizar_sistema():
     log(f"{Fore.CYAN}Atualizando sistema...{Style.RESET_ALL}")
-    run_cmd(['pacman', '-Syu', '--noconfirm'])
+    run_cmd(['pacman','-Syu','--noconfirm'])
 
 def instalar_aide():
     instalar_pacote('aide')
-    run_cmd(['aide', '--init'])
-    shutil.move('/var/lib/aide/aide.db.new', '/var/lib/aide/aide.db')
+    run_cmd(['aide','--init'])
+    shutil.move('/var/lib/aide/aide.db.new','/var/lib/aide/aide.db')
     log(f"{Fore.GREEN}✅ AIDE instalado e inicializado.{Style.RESET_ALL}")
 
 def checar_pacotes_atualizados():
     log(f"{Fore.CYAN}Verificando pacotes desatualizados...{Style.RESET_ALL}")
     run_cmd(['checkupdates'])
 
-# ------------------ Menu Interativo ------------------
+# ------------------ Menus ------------------
 
-def menu():
+def menu_hardening():
     while True:
         print(f"""
-{Fore.BLUE}{Style.BRIGHT}===== Painel de Segurança & Pentest Arch Linux ====={Style.RESET_ALL}
-{Fore.GREEN}🔹 Hardening:{Style.RESET_ALL}
-  1) 💻 Aplicar sysctl hardening
-  2) 🔒 SSH hardening
-  3) 🐧 Instalar kernel linux-hardened
-
-{Fore.MAGENTA}🔹 Pentest:{Style.RESET_ALL}
-  4) 🛠 Ferramentas básicas
-  5) 🛠 Ferramentas AUR
-  6) 🛠 Ferramentas extras (sqlmap, wpscan, masscan, ffuf)
-
-{Fore.YELLOW}🔹 Utilitários:{Style.RESET_ALL}
-  7) 📄 Checar arquivos SUID
-  8) 📄 Checar permissões críticas
-  9) 💾 Backup de /etc
-  10) 📊 Relatório do sistema
-  11) 🔄 Atualizar sistema
-  12) 🛡 Instalar AIDE
-  13) ⏳ Checar pacotes desatualizados
-
-  0) 🚪 Sair
+{Fore.GREEN}===== Hardening ====={Style.RESET_ALL}
+1) 💻 Aplicar sysctl hardening
+2) 🔒 SSH hardening
+3) 🐧 Instalar kernel linux-hardened
+0) 🔙 Voltar
 """)
-        escolha = input(f"{Fore.CYAN}Escolha uma opção: {Style.RESET_ALL}")
+        escolha = input(f"{Fore.CYAN}Escolha: {Style.RESET_ALL}")
         if escolha == '1':
             aplicar_sysctl()
         elif escolha == '2':
             hardening_ssh()
         elif escolha == '3':
             instalar_kernel_hardened()
-        elif escolha == '4':
+        elif escolha == '0':
+            return
+        else:
+            log(f"{Fore.RED}Opção inválida.{Style.RESET_ALL}")
+
+def menu_pentest():
+    while True:
+        print(f"""
+{Fore.MAGENTA}===== Pentest ====={Style.RESET_ALL}
+1) 🛠 Ferramentas básicas
+2) 🛠 Ferramentas AUR
+3) 🛠 Ferramentas extras
+0) 🔙 Voltar
+""")
+        escolha = input(f"{Fore.CYAN}Escolha: {Style.RESET_ALL}")
+        if escolha == '1':
             instalar_pentest_basico()
-        elif escolha == '5':
+        elif escolha == '2':
             instalar_pentest_aur()
-        elif escolha == '6':
+        elif escolha == '3':
             instalar_pentest_extras()
-        elif escolha == '7':
+        elif escolha == '0':
+            return
+        else:
+            log(f"{Fore.RED}Opção inválida.{Style.RESET_ALL}")
+
+def menu_utilitarios():
+    while True:
+        print(f"""
+{Fore.YELLOW}===== Utilitários ====={Style.RESET_ALL}
+1) 📄 Checar arquivos SUID
+2) 📄 Checar permissões críticas
+3) 💾 Backup de /etc
+4) 📊 Relatório do sistema
+5) 🔄 Atualizar sistema
+6) 🛡 Instalar AIDE
+7) ⏳ Checar pacotes desatualizados
+0) 🔙 Voltar
+""")
+        escolha = input(f"{Fore.CYAN}Escolha: {Style.RESET_ALL}")
+        if escolha == '1':
             checar_suid()
-        elif escolha == '8':
+        elif escolha == '2':
             checar_permissoes_criticas()
-        elif escolha == '9':
+        elif escolha == '3':
             backup_etc()
-        elif escolha == '10':
+        elif escolha == '4':
             relatorio_sistema()
-        elif escolha == '11':
+        elif escolha == '5':
             atualizar_sistema()
-        elif escolha == '12':
+        elif escolha == '6':
             instalar_aide()
-        elif escolha == '13':
+        elif escolha == '7':
             checar_pacotes_atualizados()
         elif escolha == '0':
-            log(f"{Fore.GREEN}Saindo... 🔚{Style.RESET_ALL}")
-            sys.exit(0)
+            return
         else:
-            log(f"{Fore.RED}Opção inválida, tente novamente.{Style.RESET_ALL}")
+            log(f"{Fore.RED}Opção inválida.{Style.RESET_ALL}")
 
-# ------------------ Main ------------------
-
-if __name__ == "__main__":
-    check_root()
-    try:
-        menu()
-    except KeyboardInterrupt:
-        log(f"{Fore.RED}Interrompido pelo usuário. Saindo...{Style.RESET_ALL}")
+def menu_principal():
+    while True:
+        print(f"""
+{Fore.BLUE}{Style.BRIGHT}===== Painel Ultimate Arch Linux ====={Style.RESET_ALL}
+1) 🛡 Hardening
+2) 🛠 Pentest
+3) ⚙️ Utilitários
+4) 🐳 Configurar Docker seguro
+0) 🚪 Sair
+""")
+        escolha = input(f"{Fore.CYAN}Escolha uma opção: {Style.RESET_ALL}")
+        if escolha == '1':
+            menu_hardening()
+        elif escolha == '2':
+            menu_pentest()
+        elif escolha == '3':
+            menu_utilitarios()
+        elif escolha ==
