@@ -1,6 +1,6 @@
 #!/bin/bash
 
-REPO_URL="https://github.com/seuusuario/seurepositorio.git"
+REPO_URL="https://github.com/0xBl4ckn3t/SecureArchSetup.git"
 PROJETO_DIR="meu-projeto"
 
 echo "🚀 Iniciando instalador..."
