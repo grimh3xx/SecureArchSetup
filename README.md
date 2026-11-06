@@ -1,4 +1,4 @@
-# 🔐 SecureArchSetup
+<img src="docs/banner.svg" alt="SecureArchSetup" width="100%">
 
 > **Automated secure Arch Linux setup** for developers, pentesters, and hardware enthusiasts.
 
