@@ -2,10 +2,10 @@
 
 > **Automated secure Arch Linux setup** for developers, pentesters, and hardware enthusiasts.
 
-![Arch Linux](https://img.shields.io/badge/Arch%20Linux-1793D1?logo=arch-linux&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-green)
-![Security](https://img.shields.io/badge/Security-Hardened-orange)
-![Status](https://img.shields.io/badge/Status-Active-brightgreen)
+[![build](https://img.shields.io/github/actions/workflow/status/grimh3xx/SecureArchSetup/build.yml?branch=main&style=flat-square&labelColor=111826&label=build)](https://github.com/grimh3xx/SecureArchSetup/actions)
+[![license](https://img.shields.io/github/license/grimh3xx/SecureArchSetup?style=flat-square&labelColor=111826&color=22D3EE)](LICENSE)
+![Arch Linux](https://img.shields.io/badge/Arch%20Linux-hardened-3B82F6?style=flat-square&labelColor=111826)
+![python](https://img.shields.io/badge/python-3-22D3EE?style=flat-square&labelColor=111826)
 
 ## 📖 About
 **SecureArchSetup** is a Python-powered automation tool that transforms a fresh Arch Linux install into a hardened, developer- and pentester-friendly environment.  
