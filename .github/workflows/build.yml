@@ -3,7 +3,6 @@ name: build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -11,14 +10,27 @@ permissions:
   contents: read
 
 jobs:
-  check:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Byte-compile
-        run: python -m py_compile SecureArchSetup.py
-      - name: Lint (errors only)
-        run: pip install -q pyflakes && python -m pyflakes SecureArchSetup.py
+      - name: ShellCheck
+        run: shellcheck -x secure-arch-setup lib/*.sh tests/run.sh
+
+  test:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pacman -Syu --noconfirm --needed diffutils
+      - name: Tests (scratch root)
+        run: bash tests/run.sh
+      - name: Dry run of every profile
+        run: |
+          for p in workstation pentest full; do
+            ./secure-arch-setup --dry-run --yes profile "$p" > /dev/null
+          done
+      - name: Install layout
+        run: |
+          make install DESTDIR=/tmp/pkg
+          SAS_LIB=/tmp/pkg/usr/lib/secure-arch-setup /tmp/pkg/usr/local/bin/secure-arch-setup --version

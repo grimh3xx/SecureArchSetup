@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# secure-arch-setup: hardening and pentest setup for Arch Linux.
+# Every change is backed up and can be undone with `secure-arch-setup restore`.
+set -Euo pipefail
+
+SAS_VERSION="2.0.0"
+SAS_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+SAS_LIB="${SAS_LIB:-$SAS_DIR/lib}"
+[[ -d "$SAS_LIB" ]] || SAS_LIB=/usr/lib/secure-arch-setup
+
+# shellcheck source=lib/ui.sh
+source "$SAS_LIB/ui.sh"
+# shellcheck source=lib/core.sh
+source "$SAS_LIB/core.sh"
+# shellcheck source=lib/harden.sh
+source "$SAS_LIB/harden.sh"
+# shellcheck source=lib/tools.sh
+source "$SAS_LIB/tools.sh"
+# shellcheck source=lib/audit.sh
+source "$SAS_LIB/audit.sh"
+
+declare -A PROFILES=(
+    [workstation]="harden:sysctl harden:ssh harden:firewall audit"
+    [pentest]="harden:sysctl harden:ssh harden:firewall tools:recon tools:web tools:network tools:cracking audit"
+    [full]="update harden:sysctl harden:ssh harden:firewall harden:kernel docker tools:all aide audit"
+)
+declare -A PROFILE_INFO=(
+    [workstation]="kernel parameters, SSH, firewall, then an audit"
+    [pentest]="workstation + recon, web, network and cracking tools"
+    [full]="pentest + update, linux-hardened, Docker, all tools, AIDE"
+)
+
+usage() {
+    cat <<EOF
+${C_TITLE}secure-arch-setup${C_RESET} ${C_DIM}v$SAS_VERSION${C_RESET} — hardening and pentest setup for Arch Linux
+
+${C_MUTED}Usage:${C_RESET} secure-arch-setup [options] [command]
+
+${C_MUTED}Commands:${C_RESET}
+  menu                      interactive menu (default)
+  profile NAME              workstation | pentest | full
+  harden [STEP...]          sysctl ssh firewall kernel   (default: sysctl ssh firewall)
+  tools [SET...]            recon web network wireless cracking exploit | all
+  docker                    Docker with a hardened daemon.json
+  audit                     read-only security score + Markdown report
+  update                    pacman -Syu (and AUR packages)
+  snapshot                  tar.gz of /etc
+  aide                      AIDE file-integrity baseline
+  restore [ID|latest]       undo a run (restore --list shows them)
+
+${C_MUTED}Options:${C_RESET}
+  -n, --dry-run             show what would change, change nothing
+  -y, --yes                 don't ask for confirmation
+  -u, --user NAME           user for AUR builds and groups (default: \$SUDO_USER)
+      --no-color            plain output
+  -V, --version
+  -h, --help
+
+${C_MUTED}Examples:${C_RESET}
+  sudo secure-arch-setup --dry-run profile pentest
+  sudo secure-arch-setup harden sysctl firewall
+  sudo secure-arch-setup audit
+  sudo secure-arch-setup restore latest
+EOF
+}
+
+do_step() {
+    case "$1" in
+        harden:sysctl) harden_sysctl ;;
+        harden:ssh) harden_ssh ;;
+        harden:firewall) harden_firewall ;;
+        harden:kernel) harden_kernel ;;
+        tools:*) install_tools "${1#tools:}" ;;
+        docker) setup_docker ;;
+        update) update_system ;;
+        snapshot) snapshot_etc ;;
+        aide) setup_aide ;;
+        audit) run_audit ;;
+        *) die "unknown step: $1" ;;
+    esac
+}
+
+run_profile() {
+    local name=${1:-}
+    [[ -n "${PROFILES[$name]:-}" ]] || die "unknown profile '${name}' (workstation, pentest, full)"
+    section "Profile · $name"
+    info "${PROFILE_INFO[$name]}"
+    local step
+    for step in ${PROFILES[$name]}; do
+        printf '    %s→%s %s\n' "$C_ACCENT2" "$C_RESET" "${step/:/ · }"
+    done
+    confirm "Apply profile $name?" || { skip "cancelled"; return 0; }
+    for step in ${PROFILES[$name]}; do do_step "$step"; done
+}
+
+finish() {
+    if (( CHANGED )); then
+        section "Done"
+        ok "$CHANGED file(s) changed · backup: $BACKUP_ROOT/$RUN_ID"
+        info "undo everything from this run: sudo secure-arch-setup restore $RUN_ID"
+    fi
+}
+
+menu() {
+    local choice sets
+    while true; do
+        printf '\n'
+        printf '  %s1%s  Profile: workstation   %s%s%s\n' "$C_ACCENT2" "$C_RESET" "$C_DIM" "${PROFILE_INFO[workstation]}" "$C_RESET"
+        printf '  %s2%s  Profile: pentest       %s%s%s\n' "$C_ACCENT2" "$C_RESET" "$C_DIM" "${PROFILE_INFO[pentest]}" "$C_RESET"
+        printf '  %s3%s  Profile: full          %s%s%s\n' "$C_ACCENT2" "$C_RESET" "$C_DIM" "${PROFILE_INFO[full]}" "$C_RESET"
+        printf '  %s4%s  Harden one area        %ssysctl · ssh · firewall · kernel%s\n' "$C_ACCENT2" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '  %s5%s  Install a toolset      %s%s%s\n' "$C_ACCENT2" "$C_RESET" "$C_DIM" "${TOOLSET_ORDER[*]}" "$C_RESET"
+        printf '  %s6%s  Docker (hardened)\n' "$C_ACCENT2" "$C_RESET"
+        printf '  %s7%s  Audit                  %sread-only score and report%s\n' "$C_ACCENT2" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '  %s8%s  Maintenance            %supdate · /etc snapshot · AIDE%s\n' "$C_ACCENT2" "$C_RESET" "$C_DIM" "$C_RESET"
+        printf '  %s9%s  Restore a backup\n' "$C_ACCENT2" "$C_RESET"
+        printf '  %s0%s  Quit\n\n' "$C_ACCENT2" "$C_RESET"
+        read -r -p "  ${C_ACCENT2}›${C_RESET} " choice || break
+        case "$choice" in
+            1) run_profile workstation ;;
+            2) run_profile pentest ;;
+            3) run_profile full ;;
+            4) read -r -p "  area (sysctl ssh firewall kernel): " choice; for s in $choice; do do_step "harden:$s"; done ;;
+            5) read -r -a sets -p "  toolset (${TOOLSET_ORDER[*]} all): "; install_tools "${sets[@]}" ;;
+            6) setup_docker ;;
+            7) run_audit ;;
+            8) read -r -p "  task (update snapshot aide): " choice; for s in $choice; do do_step "$s"; done ;;
+            9) list_backups; read -r -p "  run id (empty = latest): " choice; restore_run "${choice:-latest}" ;;
+            0|q|"") break ;;
+            *) warn "unknown option" ;;
+        esac
+    done
+}
+
+main() {
+    local args=()
+    while (( $# )); do
+        case "$1" in
+            -n|--dry-run) DRY_RUN=1 ;;
+            -y|--yes) ASSUME_YES=1 ;;
+            -u|--user) TARGET_USER=${2:?--user needs a name}; shift ;;
+            --no-color) C_ACCENT='' C_ACCENT2='' C_TITLE='' C_TEXT='' C_MUTED='' C_DIM='' C_OK='' C_WARN='' C_ERR='' C_BOLD='' C_RESET='' ;;
+            -V|--version) echo "secure-arch-setup $SAS_VERSION"; return 0 ;;
+            -h|--help) usage; return 0 ;;
+            *) args+=("$1") ;;
+        esac
+        shift
+    done
+    set -- "${args[@]}"
+    local cmd=${1:-menu}
+    (( $# )) && shift
+
+    [[ -f "$(path /etc/arch-release)" ]] || die "this tool is for Arch Linux (no /etc/arch-release)"
+    local needs_root=1
+    [[ "$cmd" == audit || ( "$cmd" == restore && "${1:-}" == --list ) ]] && needs_root=0
+    if (( needs_root && EUID != 0 && ! DRY_RUN )) && [[ -z "$SAS_ROOT" ]]; then
+        die "run as root: sudo $0 ${args[*]:-}  (or try --dry-run first)"
+    fi
+    detect_target_user
+
+    banner
+    case "$cmd" in
+        menu) menu ;;
+        profile) run_profile "${1:-}" ;;
+        harden) local s; (( $# )) || set -- sysctl ssh firewall; for s in "$@"; do do_step "harden:$s"; done ;;
+        tools) install_tools "$@" ;;
+        docker|update|snapshot|aide|audit) do_step "$cmd" ;;
+        restore) if [[ "${1:-}" == --list ]]; then list_backups; else restore_run "${1:-latest}"; fi ;;
+        *) usage; die "unknown command: $cmd" ;;
+    esac
+    finish
+}
+
+main "$@"

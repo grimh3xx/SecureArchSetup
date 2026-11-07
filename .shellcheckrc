@@ -1,0 +1,2 @@
+# A && B || C is used where B always succeeds (status printers); backticks in Markdown are literal.
+disable=SC2015,SC2016
