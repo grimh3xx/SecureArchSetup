@@ -22,7 +22,7 @@ jobs:
     container: archlinux:latest
     steps:
       - uses: actions/checkout@v4
-      - run: pacman -Syu --noconfirm --needed diffutils
+      - run: pacman -Syu --noconfirm --needed diffutils make
       - name: Tests (scratch root)
         run: bash tests/run.sh
       - name: Dry run of every profile
