@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Terminal output: CentralTech palette, status lines, prompts.
+# Terminal output: grimh3xx palette, status lines, prompts.
 # shellcheck disable=SC2034  # colours are used by the other modules
 
 if [[ ( -t 1 || -n "${FORCE_COLOR:-}" ) && -z "${NO_COLOR:-}" ]]; then
@@ -21,7 +21,7 @@ banner() {
     printf '  %s%s%s\n' "$C_ACCENT" "$l1" "$C_RESET"
     printf '  %s%s%s   %sSETUP%s %sv%s%s\n' "$C_ACCENT" "$l2" "$C_RESET" "$C_ACCENT2$C_BOLD" "$C_RESET" "$C_DIM" "$SAS_VERSION" "$C_RESET"
     printf '  %s%s%s   %sHardening & pentest setup for Arch Linux%s\n' "$C_ACCENT2" "$l3" "$C_RESET" "$C_MUTED" "$C_RESET"
-    printf '  %sCentralTech · github.com/grimh3xx/SecureArchSetup%s\n' "$C_DIM" "$C_RESET"
+    printf '  %sgithub.com/grimh3xx/SecureArchSetup%s\n' "$C_DIM" "$C_RESET"
     if (( DRY_RUN )); then
         printf '\n  %s● DRY RUN%s %s— nothing will be changed%s\n' "$C_WARN$C_BOLD" "$C_RESET" "$C_MUTED" "$C_RESET"
     fi
